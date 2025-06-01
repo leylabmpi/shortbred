@@ -154,10 +154,10 @@ if len(sys.argv)==1:
 
 print("Checking dependencies...")
 src.CheckDependency(args.strUSEARCH,"","usearch")    
-src.CheckDependency(args.strBLASTP,"-h","blastp")
+src.CheckDependency(args.strBLASTP,"-h","diamond blastp")
 src.CheckDependency(args.strMUSCLE,"-h","muscle")
 src.CheckDependency(args.strCDHIT,"-h","cdhit")
-src.CheckDependency(args.strMAKEBLASTDB,"-h","makeblastdb")
+src.CheckDependency(args.strMAKEBLASTDB,"-h","diamond makedb")
 
 print("Checking to make sure that installed version of usearch can make databases...")
 pCmd = subprocess.Popen([args.strUSEARCH,"-help","makeudb_usearch"],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
@@ -278,8 +278,8 @@ if(iMode==1 or iMode==2):
 	#Make database from goi centroids
 	subprocess.check_call([
 #		c_strTIME, "-o", dirTime + os.sep + "goidb.time",
-		args.strMAKEBLASTDB, "-in", strClustFile, "-out", strClustDB,
-		"-dbtype", "prot", "-logfile", dirTmp + os.sep + "goidb.log"])
+		args.strMAKEBLASTDB,"makedb", "--in", strClustFile, "-d", strClustDB])#,
+                #"-dbtype", "prot", "-logfile", dirTmp + os.sep + "goidb.log"])
 
 ################################################################################
 # Step Two: Create reference database, if not supplied by user.
@@ -295,8 +295,8 @@ if(iMode==1):
 		src.check_file(str(args.sRefProts))
 		subprocess.check_call([
 #			c_strTIME, "-o", dirTime + os.sep + "refdb.time",
-			args.strMAKEBLASTDB, "-in", str(args.sRefProts),"-out", strRefDBPath,
-			"-dbtype", "prot", "-logfile", dirTmp + os.sep +  "refdb.log"])
+			args.strMAKEBLASTDB,"makedb", "--in", str(args.sRefProts),"-d", strRefDBPath])
+			#"-dbtype", "prot", "-logfile", dirTmp + os.sep +  "refdb.log"])
 
 ################################################################################
 # Step Three: Run Blast Searches
@@ -315,25 +315,32 @@ if(iMode==1 or iMode==2):
 	strBlastRef = dirBlastResults + os.sep + "refblast.txt"
 	strBlastSelf = dirBlastResults + os.sep + "selfblast.txt"
 
-	astrBlastParams = ["-outfmt", "6 std qlen", "-matrix", "PAM30", "-ungapped",
-		"-comp_based_stats","F","-window_size","0",
-		"-xdrop_ungap","1","-evalue","1e-3",
-		"-max_target_seqs", "1000000",
-		"-num_threads",str(args.iThreads)]
+	astrBlastParams = ["--outfmt", "6 std qlen", "--matrix", "PAM30", 
+		    
+			#"--ungapped",
+			"--ungapped-score","20",
+
+		#"--comp_based_stats","F",
+		"--comp-based-stats","F",
+		
+		#"--window_size","0",
+		"--xdrop","1","--evalue","1e-3",
+		"--max-target-seqs", "1000000",
+		"--threads",str(args.iThreads)]
 
 
 	#Blast clust file against goidb
 	sys.stderr.write( "BLASTing the consensus family sequences against themselves...\n")
 	subprocess.check_call([
 #		"time", "-o", dirTime + os.sep +"goisearch.time",
-		strBLASTP, "-query", strClustFile, "-db", strClustDB,
-		"-out", strBlastSelf] + astrBlastParams)
+		strBLASTP,"blastp", "--query", strClustFile, "--db", strClustDB,
+		"--out", strBlastSelf] + astrBlastParams)
 
 	#Blast clust file against refdb
 	sys.stderr.write("BLASTing the consensus family sequences against the reference protein sequences...\n")
 	subprocess.check_call([
 #		"time", "-o", dirTime + os.sep +"refsearch.time",
-		strBLASTP, "-query", strClustFile, "-db",strRefDBPath,
+		strBLASTP,"blastp", "-query", strClustFile, "-db",strRefDBPath,
 		"-out", strBlastRef] + astrBlastParams)
 
 ##################################################################################################

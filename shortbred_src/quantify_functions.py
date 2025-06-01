@@ -71,15 +71,21 @@ def CompareVersions(strVersion1,strVersion2):
     #print(str(aiV1),str(aiV2))
     return ((aiV1 > aiV2) - (aiV1 < aiV2))
 
-def MakedbUSEARCH ( strMarkers, strDBName,strUSEARCH):
+def MakedbUSEARCH ( strMarkers, strDBName, strUSEARCH):
     # This functions calls usearch to make a database of the ShortBRED markers.
 	p = subprocess.check_call([strUSEARCH, "--makeudb_usearch", strMarkers,"--output", strDBName])
 	return
 
-def MakedbRapsearch2 ( strMarkers, strDBName,strPrerapPath):
+def MakedbRapsearch2 ( strMarkers, strDBName, strPrerapPath):
     # This functions calls prerapsearch to make a database of the ShortBRED markers.
 	p = subprocess.check_call([strPrerapPath, "-d", strMarkers,"-n", strDBName])
 	return
+
+def MakedbDiamond ( strMarkers, strDBName, strDiamond):
+    # This functions calls diamond to make a database of the ShortBRED markers.	
+	p = subprocess.check_call([strDiamond, "makedb", "--in", strMarkers, "-d", strDBName])
+	return
+
 
 def MakedbBLASTnuc ( strMakeBlastDB, strDBName,strGenome,dirTmp):
 	print("Making blastdb in " + dirTmp)
@@ -265,7 +271,7 @@ def RunRAPSEARCH2 ( strMarkers, strWGS,strBlastOut, strDB,iThreads,dID, dirTmp, 
     # Calls rapsearch2. It currently does not output the length of the wgs reads, which we use use to 1) filter low reads and .
 
     with open(strWGS,"r") as streamSeq:
-        p = Popen([strRAPSEARCH2,"-q","stdin","-d", strDB,"-o",strBlastOut],stdin=streamSeq,stdout=PIPE)
+        p = Popen([strRAPSEARCH2,"-q","stdin","-d", strDB,"-o",strBlastOut, "-z", str(iThreads)],stdin=streamSeq,stdout=PIPE)				
         p.communicate()
         return
     
@@ -292,6 +298,18 @@ def RunRAPSEARCH2 ( strMarkers, strWGS,strBlastOut, strDB,iThreads,dID, dirTmp, 
                  #print(strRapOut)
     """
 	
+
+def RunDiamond ( strMarkers, strWGS, strBlastOut, strDB,iThreads,dID, dirTmp, iAccepts, iRejects, strDiamond):
+    # Calls Diamond.
+
+	#strFields = "query+target+id+alnlen+mism+opens+qlo+qhi+tlo+thi+evalue+bits+ql+tl+qs+ts"
+
+	sys.stderr.write("\n--------------------" + strBlastOut + "\n-----------------\n")
+	###subprocess.check_call([strDiamond, "blastx", "-d", strDB, "-q", strWGS, "-o", strBlastOut])
+	subprocess.check_call([strDiamond, "blastx", "--threads", str(iThreads), "-d", strDB, "-q", strWGS, "-o", strBlastOut])
+	#subprocess.check_call([strDiamond, "blastx", "--ultra-sensitive", "--threads", str(iThreads), "-d", strDB, "-q", strWGS, "-o", strBlastOut])
+
+
 
 
 def RunUSEARCHGenome ( strMarkers, strWGS,strBlastOut, strDB,iThreads,dID, dirTmp, iAccepts, iRejects,strUSEARCH):
@@ -390,6 +408,65 @@ def StoreHitCountsRapsearch2(strBlastOut,strValidHits,dictHitsForMarker,dictMark
                         csvwHits.writerow( aLine )
         return
 
+def StoreHitCountsDiamond(strBlastOut,strValidHits,dictHitsForMarker,dictMarkerLen,dictHitCounts,dID,strCentCheck,dAlnLength,iMinReadAA,iAvgReadAA,iAlnCentroids=30,strUSearchOut=False):
+# Refactored from a similar RAPSEARCH2 function; same m8 format
+# Some small changes are made for Diamond output in this function.
+# *skip the first 5 lines
+#* rearrange columns.
+
+    #strBlastOut = strBlastOut + ".m8"
+    iSkip = 0
+
+    with open(strValidHits, 'a') as csvfileHits:
+        csvwHits = csv.writer( csvfileHits, csv.excel_tab )
+        sys.stderr.write("Processing Diamond results... \n")
+        #Go through the Diamond output, for each prot family, record the number of valid hits
+
+        with open(strBlastOut, 'r') as csvfileBlast:
+            csvReader = csv.reader( csvfileBlast, delimiter='\t' )
+            for i in range(iSkip):
+                next(csvReader)
+            for aLine in csvReader:
+                strMarker       = aLine[1]
+                dHitID          = aLine[2]
+                iAlnLen     = int(aLine[3])
+                if (strUSearchOut):
+                    iReadLenAA  = int(aLine[12])
+                else:
+                    iReadLenAA = abs(int(aLine[7]) - int(aLine[6]))/3.0
+    
+                # A valid match must be as long as 95% of the read or the full marker.
+                # (Note that this in AA's.)
+    
+                #If using centroids (Typically only used for evaluation purposes.)....
+                if strCentCheck=="Y":
+                    strProtFamily = strMarker
+                    
+                    if ( (int(iAlnLen)>= iAlnCentroids) and ( float(dHitID)/100) >= dID):
+                                    dictHitCounts[strProtFamily] = dictHitCounts.setdefault(strProtFamily,0) + 1
+                                    dictHitsForMarker[strProtFamily] = dictHitsForMarker.setdefault(strProtFamily,0) + 1
+                                    csvwHits.writerow( aLine )
+    
+                #If using ShortBRED Markers (and not centroids)...
+                else:
+                    iAlnMin = min(dictMarkerLen[strMarker] ,math.floor((iAvgReadAA)*dAlnLength))
+                    #Get the Family Name
+                    mtchProtStub = re.search(r'(.*)_(.M)[0-9]*_\#([0-9]*)',strMarker)
+                    strProtFamily = mtchProtStub.group(1)
+                    #If hit satisfies criteria, add it to counts, write out data to Hits file
+                    # NOTE: Rapsearch2 does not currently output the original query read length, so we do *NOT* filter based on read length.
+                    if (int(iAlnLen)>= iAlnMin and (float(dHitID)/100) >= dID):
+    
+                        #Add 1 to count of hits for that marker, and family
+                        dictHitsForMarker[aLine[1]] = dictHitsForMarker.setdefault(aLine[1],0) + 1
+                        dictHitCounts[strProtFamily] = dictHitCounts.setdefault(strProtFamily,0) +1
+    
+                        csvwHits.writerow( aLine )
+        return
+
+
+
+
 """
 * Consider writing a function to process TBLASTN hits
 """
@@ -404,7 +481,9 @@ def StoreHitCounts(strBlastOut,strValidHits,dictHitsForMarker,dictMarkerLen,dict
 	# If the version in use is newer than 6.0.307,     
 	CompareVersions(strVersionUSEARCH,c_vstrUsearchForAAValue)
 
-
+	## output the key of the first element in dictMarkerLen
+	#sys.stderr.write("dictMarkerLen: |" + str(list(dictMarkerLen.keys())[0]) + "|\n")
+					
 	with open(strValidHits, 'a') as csvfileHits:
 		csvwHits = csv.writer( csvfileHits, csv.excel_tab )
 		sys.stderr.write("Processing USEARCH results... \n")
@@ -412,7 +491,7 @@ def StoreHitCounts(strBlastOut,strValidHits,dictHitsForMarker,dictMarkerLen,dict
 
 		with open(strBlastOut, 'r') as csvfileBlast:
 			for aLine in csv.reader( csvfileBlast, delimiter='\t' ):
-				strMarker 	= aLine[1]
+				strMarker 	= aLine[1].strip() ###aLine[1]
 				dHitID		= aLine[2]
 				iAlnLen     = int(aLine[3])
 				if (strUSearchOut):
